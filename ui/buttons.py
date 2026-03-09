@@ -103,7 +103,8 @@ class RefreshLeaderboardButton(discord.ui.Button):
         from database import db
         from ui.embeds import create_leaderboard_embed
 
-        users = db.get_leaderboard()
+        guild_id = str(interaction.guild_id)
+        users = db.get_leaderboard(guild_id)
         embed = create_leaderboard_embed(users, interaction.client)
 
         await interaction.response.edit_message(embed=embed, view=self.view)
@@ -132,7 +133,8 @@ class RefreshBalanceButton(discord.ui.Button):
         from database import db
         from ui.embeds import create_balance_embed
 
-        user_data = db.get_or_create_user(str(interaction.user.id))
+        guild_id = str(interaction.guild_id)
+        user_data = db.get_or_create_user(str(interaction.user.id), guild_id)
         embed = create_balance_embed(
             interaction.user, user_data["balance"], user_data["total_profit"]
         )

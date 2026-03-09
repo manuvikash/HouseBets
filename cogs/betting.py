@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from database import db
 from ui import create_market_embed, MarketView
-from utils import calculate_cost, format_currency
+from utils import calculate_cost, shares_for_amount, format_currency
 import logging
 
 logger = logging.getLogger(__name__)
@@ -50,8 +50,10 @@ class Betting(commands.Cog):
                 )
                 return
 
+            guild_id = market["guild_id"]
+
             # Get user balance
-            user_data = db.get_or_create_user(str(interaction.user.id))
+            user_data = db.get_or_create_user(str(interaction.user.id), guild_id)
             balance = user_data["balance"]
 
             if amount > balance:
@@ -61,30 +63,10 @@ class Betting(commands.Cog):
                 )
                 return
 
-            # Calculate cost and shares using AMM
-            # For simplicity: shares = amount / current_price
-            from utils import calculate_price
-
-            current_price = calculate_price(market["liquidity"], outcome)
-
-            # Calculate shares we can buy with this amount
-            # Using simplified model: cost = shares * price
-            shares = amount / current_price
-
+            # Derive shares from spend amount using AMM inverse formula
             try:
-                # Update liquidity
-                cost, new_liquidity = calculate_cost(
-                    market["liquidity"], outcome, shares
-                )
-
-                # Use the actual cost from AMM
-                if cost > balance:
-                    await interaction.followup.send(
-                        f"Insufficient balance for this bet! Cost: {format_currency(cost)}",
-                        ephemeral=True,
-                    )
-                    return
-
+                shares = shares_for_amount(market["liquidity"], outcome, amount)
+                cost, new_liquidity = calculate_cost(market["liquidity"], outcome, shares)
             except ValueError as e:
                 await interaction.followup.send(f"Error: {str(e)}", ephemeral=True)
                 return
@@ -92,6 +74,7 @@ class Betting(commands.Cog):
             # Place bet
             db.place_bet(
                 user_id=str(interaction.user.id),
+                guild_id=guild_id,
                 market_id=market_id,
                 outcome=outcome,
                 shares=shares,
@@ -100,7 +83,7 @@ class Betting(commands.Cog):
 
             # Update user balance
             new_balance = balance - cost
-            db.update_balance(str(interaction.user.id), new_balance)
+            db.update_balance(str(interaction.user.id), guild_id, new_balance)
 
             # Update market liquidity
             db.update_market_liquidity(market_id, new_liquidity)
@@ -116,7 +99,7 @@ class Betting(commands.Cog):
             # Update the original message with new prices
             try:
                 market = db.get_market(market_id)  # Get updated market
-                user_data = db.get_or_create_user(str(interaction.user.id))
+                user_data = db.get_or_create_user(str(interaction.user.id), guild_id)
                 position = db.get_user_position(str(interaction.user.id), market_id)
 
                 embed = create_market_embed(

@@ -24,13 +24,15 @@ def create_market_embed(
         timestamp=datetime.now(),
     )
 
-    # Add outcomes with current prices
+    # Add outcomes with prices as visual bars so odds are obvious at a glance
     outcomes_text = ""
     for outcome in market["outcomes"]:
         price = prices[outcome]
-        outcomes_text += f"**{outcome}**: {format_price(price)}\n"
+        filled = round(price * 12)
+        bar = "█" * filled + "░" * (12 - filled)
+        outcomes_text += f"**{outcome}** `{bar}` {price * 100:.1f}%\n"
 
-    embed.add_field(name="Outcomes & Prices", value=outcomes_text, inline=False)
+    embed.add_field(name="📈 Current Odds", value=outcomes_text, inline=False)
 
     # Add close time
     close_time = market["close_time"]
@@ -120,9 +122,12 @@ def create_resolved_market_embed(
 ) -> discord.Embed:
     """Create embed for resolved market announcement with per-bettor breakdown."""
 
+    total_payout = sum(payouts.values())
+    house_take = total_volume - total_payout
+
     embed = discord.Embed(
         title="✅ Market Resolved",
-        description=market["question"],
+        description=f"**{market['question']}**",
         color=discord.Color.green(),
         timestamp=datetime.now(),
     )
@@ -130,52 +135,55 @@ def create_resolved_market_embed(
     embed.add_field(
         name="🎯 Winning Outcome",
         value=f"**{market['winning_outcome']}**",
-        inline=False,
-    )
-
-    embed.add_field(
-        name="💵 Total Volume", value=format_currency(total_volume), inline=True
-    )
-
-    embed.add_field(
-        name="👥 Total Payouts",
-        value=format_currency(sum(payouts.values())),
         inline=True,
     )
+    embed.add_field(
+        name="💵 Volume", value=format_currency(total_volume), inline=True
+    )
+    embed.add_field(
+        name="💸 Paid Out", value=format_currency(total_payout), inline=True
+    )
 
-    # Per-bettor breakdown
+    # Per-bettor breakdown — each row: @user | picked | invested | payout | P/L
     if bet_details:
-        lines = []
-        # Sort: winners first (profit > 0), then losers
         sorted_bettors = sorted(
             bet_details.items(), key=lambda x: x[1]["profit"], reverse=True
         )
+        lines = []
         for user_id, detail in sorted_bettors:
-            # Summarise what they bet on
-            bets_summary = ", ".join(
+            picks = ", ".join(
                 f"{outcome} ({format_currency(pos['cost'])})"
                 for outcome, pos in detail["bets"].items()
             )
             profit = detail["profit"]
+            payout = detail["payout"]
+            icon = "🎉" if profit >= 0 else "📉"
             profit_str = (
                 f"+{format_currency(profit)}" if profit >= 0 else format_currency(profit)
             )
-            payout = detail["payout"]
-            line = (
-                f"<@{user_id}>: {bets_summary} → "
-                f"{'🎉' if profit >= 0 else '📉'} {profit_str}"
-                + (f" (payout: {format_currency(payout)})" if payout > 0 else "")
+            payout_str = f"→ {format_currency(payout)} out" if payout > 0 else "→ lost"
+            lines.append(
+                f"{icon} <@{user_id}>\n"
+                f"  Bet: {picks}  |  {payout_str}  |  **{profit_str}**"
             )
-            lines.append(line)
 
-        embed.add_field(
-            name="📋 Bet Breakdown",
-            value="\n".join(lines) if lines else "No bets placed",
-            inline=False,
-        )
+        # Discord field values cap at 1024 chars — split into chunks if needed
+        chunks, current = [], ""
+        for line in lines:
+            if len(current) + len(line) + 1 > 1020:
+                chunks.append(current.strip())
+                current = ""
+            current += line + "\n"
+        if current.strip():
+            chunks.append(current.strip())
+
+        for i, chunk in enumerate(chunks):
+            label = "📋 Results" if i == 0 else "📋 Results (cont.)"
+            embed.add_field(name=label, value=chunk, inline=False)
+    else:
+        embed.add_field(name="📋 Results", value="No bets were placed.", inline=False)
 
     embed.set_footer(text=f"Market ID: {market['id']}")
-
     return embed
 
 

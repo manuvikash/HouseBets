@@ -73,6 +73,19 @@ def calculate_cost(
     return actual_cost, new_liquidity
 
 
+def shares_for_amount(liquidity: Dict[str, float], outcome: str, amount: float) -> float:
+    """
+    Inverse of calculate_cost: given a spend amount, return how many shares you get.
+
+    From cost = L * ln(L / (L - shares))  =>  shares = L * (1 - e^(-cost/L))
+    """
+    L = liquidity[outcome]
+    shares = L * (1 - math.exp(-amount / L))
+    if shares <= 0 or shares >= L:
+        raise ValueError("Bet amount too large for available liquidity")
+    return shares
+
+
 def calculate_payout(shares: float, winning: bool) -> float:
     """
     Calculate payout for shares.

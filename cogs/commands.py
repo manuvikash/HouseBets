@@ -48,18 +48,19 @@ class HouseCommands(commands.Cog):
         modal = CreateMarketModal(self.bot, target_user=target)
         await ctx.send_modal(modal)
         await modal.wait()
-        if hasattr(modal, "result"):
-            await self._process_market_creation(ctx, modal.result)
+        if hasattr(modal, "result") and hasattr(modal, "interaction"):
+            await self._process_market_creation(modal.interaction, modal.result)
 
     @housebets.command(name="my_markets", description="View your created markets")
     async def my_markets(self, ctx: discord.ApplicationContext):
         """Show user's created markets."""
         await ctx.defer(ephemeral=True)
-        markets = db.get_user_markets(str(ctx.user.id))
+        guild_id = str(ctx.guild_id)
+        markets = db.get_user_markets(str(ctx.user.id), guild_id)
         embed = create_my_markets_embed(markets)
         await ctx.followup.send(embed=embed, ephemeral=True)
 
-    async def _process_market_creation(self, ctx, result):
+    async def _process_market_creation(self, interaction: discord.Interaction, result):
         """Process market creation from modal result."""
         try:
             creator = result["creator"]
@@ -67,11 +68,13 @@ class HouseCommands(commands.Cog):
             question = result["question"]
             outcomes = result["outcomes"]
             close_time = result["close_time"]
+            guild_id = str(interaction.guild_id)
 
-            db.get_or_create_user(str(creator.id))
-            db.get_or_create_user(str(target.id))
+            db.get_or_create_user(str(creator.id), guild_id)
+            db.get_or_create_user(str(target.id), guild_id)
 
             market_id = db.create_market(
+                guild_id=guild_id,
                 creator_id=str(creator.id),
                 target_id=str(target.id),
                 question=question,
@@ -81,7 +84,7 @@ class HouseCommands(commands.Cog):
 
             market = db.get_market(market_id)
 
-            await ctx.followup.send(
+            await interaction.followup.send(
                 f"✅ Market created! ID: {market_id}\n"
                 f"Question: {question}\n"
                 f"Closes: {format_datetime(close_time)}\n\n"
@@ -89,7 +92,7 @@ class HouseCommands(commands.Cog):
                 ephemeral=True,
             )
 
-            guild = ctx.guild
+            guild = interaction.guild
             if guild:
                 sent_count = 0
                 failed_count = 0
@@ -97,7 +100,7 @@ class HouseCommands(commands.Cog):
                     if member.bot or member.id == target.id:
                         continue
                     try:
-                        user_data = db.get_or_create_user(str(member.id))
+                        user_data = db.get_or_create_user(str(member.id), guild_id)
                         if member.id == creator.id:
                             # Creator gets buy buttons + resolve button
                             embed = create_market_embed(market, user_balance=user_data["balance"])
@@ -127,7 +130,7 @@ class HouseCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error creating market: {e}", exc_info=True)
-            await ctx.followup.send(f"❌ Error creating market: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ Error creating market: {str(e)}", ephemeral=True)
 
     @discord.user_command(name="Create Market About")
     async def create_market_context(
@@ -143,8 +146,8 @@ class HouseCommands(commands.Cog):
         modal = CreateMarketModal(self.bot, target_user=user)
         await ctx.send_modal(modal)
         await modal.wait()
-        if hasattr(modal, "result"):
-            await self._process_market_creation(ctx, modal.result)
+        if hasattr(modal, "result") and hasattr(modal, "interaction"):
+            await self._process_market_creation(modal.interaction, modal.result)
 
     # ── Leaderboard ──────────────────────────────────────────────────────────
 
@@ -152,7 +155,8 @@ class HouseCommands(commands.Cog):
     async def balance(self, ctx: discord.ApplicationContext):
         """Show user balance."""
         await ctx.defer(ephemeral=True)
-        user_data = db.get_or_create_user(str(ctx.user.id))
+        guild_id = str(ctx.guild_id)
+        user_data = db.get_or_create_user(str(ctx.user.id), guild_id)
         embed = create_balance_embed(ctx.user, user_data["balance"], user_data["total_profit"])
         view = BalanceView()
         await ctx.followup.send(embed=embed, view=view, ephemeral=True)
@@ -161,7 +165,8 @@ class HouseCommands(commands.Cog):
     async def leaderboard(self, ctx: discord.ApplicationContext):
         """Show leaderboard."""
         await ctx.defer()
-        users = db.get_leaderboard()
+        guild_id = str(ctx.guild_id)
+        users = db.get_leaderboard(guild_id)
         embed = create_leaderboard_embed(users, self.bot)
         view = LeaderboardView()
         await ctx.followup.send(embed=embed, view=view)
@@ -172,8 +177,9 @@ class HouseCommands(commands.Cog):
     async def resolve_market(self, ctx: discord.ApplicationContext):
         """Resolve a market."""
         await ctx.defer(ephemeral=True)
+        guild_id = str(ctx.guild_id)
 
-        markets = db.get_user_markets(str(ctx.user.id))
+        markets = db.get_user_markets(str(ctx.user.id), guild_id)
         unresolved = [m for m in markets if not m["resolved"]]
 
         if not unresolved:
@@ -184,19 +190,23 @@ class HouseCommands(commands.Cog):
         await ctx.followup.send("Select a market to resolve:", view=view, ephemeral=True)
         await view.wait()
 
-        if view.selected_market_id:
-            market = db.get_market(view.selected_market_id)
-            outcome_view = OutcomeSelectionView(market["id"], market["outcomes"])
-            await view.interaction.response.send_message(
-                "Select the winning outcome:", view=outcome_view, ephemeral=True
-            )
-            await outcome_view.wait()
-            if outcome_view.selected_outcome:
-                result = {
-                    "market_id": market["id"],
-                    "winning_outcome": outcome_view.selected_outcome,
-                }
-                await self._process_resolution(outcome_view.interaction, result)
+        if not view.selected_market_id:
+            return
+
+        market = db.get_market(view.selected_market_id)
+        outcome_view = OutcomeSelectionView(market["id"], market["outcomes"])
+        # view.interaction is the select interaction — respond to it
+        await view.interaction.response.send_message(
+            "Select the winning outcome:", view=outcome_view, ephemeral=True
+        )
+        await outcome_view.wait()
+        if outcome_view.selected_outcome:
+            result = {
+                "market_id": market["id"],
+                "winning_outcome": outcome_view.selected_outcome,
+            }
+            # outcome_view.interaction was deferred; use followup
+            await self._process_resolution(outcome_view.interaction, result)
 
     async def _process_resolution(self, interaction: discord.Interaction, result):
         """Process market resolution."""
@@ -214,6 +224,8 @@ class HouseCommands(commands.Cog):
                     "You can only resolve markets you created!", ephemeral=True
                 )
                 return
+
+            guild_id = market["guild_id"]
 
             bets = db.get_market_bets(market_id)
             payouts = {}
@@ -247,11 +259,11 @@ class HouseCommands(commands.Cog):
                 detail["profit"] = payout - detail["total_cost"]
 
             for user_id, payout in payouts.items():
-                user_data = db.get_or_create_user(user_id)
-                db.update_balance(user_id, user_data["balance"] + payout)
+                user_data = db.get_or_create_user(user_id, guild_id)
+                db.update_balance(user_id, guild_id, user_data["balance"] + payout)
                 user_bets = [b for b in bets if b["user_id"] == user_id]
                 profit = payout - sum(b["cost"] for b in user_bets)
-                db.update_profit(user_id, profit)
+                db.update_profit(user_id, guild_id, profit)
 
             db.resolve_market(market_id, winning_outcome)
 
@@ -283,7 +295,7 @@ class HouseCommands(commands.Cog):
     async def _post_to_feed(self, interaction: discord.Interaction, market, payouts, bet_details, total_volume):
         """Post resolved market to feed channel."""
         try:
-            guild = interaction.guild
+            guild = interaction.guild or self.bot.get_guild(int(market["guild_id"]))
             if not guild:
                 return
 
@@ -300,9 +312,16 @@ class HouseCommands(commands.Cog):
                     return
 
             resolution_embed = create_resolved_market_embed(market, payouts, bet_details, total_volume)
-            await feed_channel.send(embed=resolution_embed)
+            await feed_channel.send(
+                f"📢 **Market #{market['id']} has been resolved!**\n"
+                f"> {market['question']}\n"
+                f"🎯 Winner: **{market['winning_outcome']}**  "
+                f"| 💵 Volume: {format_currency(total_volume)}  "
+                f"| 💸 Paid out: {format_currency(sum(payouts.values()))}",
+                embed=resolution_embed,
+            )
 
-            leaderboard_users = db.get_leaderboard()
+            leaderboard_users = db.get_leaderboard(market["guild_id"])
             leaderboard_embed = create_leaderboard_embed(leaderboard_users, self.bot)
             leaderboard_embed.title = "🏆 Updated Leaderboard"
             await feed_channel.send(embed=leaderboard_embed)

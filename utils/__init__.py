@@ -5,6 +5,7 @@ from .pricing import (
     calculate_all_prices,
     calculate_cost,
     calculate_payout,
+    shares_for_amount,
     format_price,
     format_currency,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "calculate_all_prices",
     "calculate_cost",
     "calculate_payout",
+    "shares_for_amount",
     "format_price",
     "format_currency",
     "parse_time_duration",

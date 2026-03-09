@@ -11,8 +11,8 @@ import sqlite3
 import config
 
 
-def soft_reset():
-    """Delete all rows but keep tables intact."""
+def soft_reset(guild_id: str = None):
+    """Delete all rows but keep tables intact. Optionally scope to a single guild."""
     if not os.path.exists(config.DATABASE_PATH):
         print("No database file found — nothing to reset.")
         return
@@ -20,15 +20,20 @@ def soft_reset():
     conn = sqlite3.connect(config.DATABASE_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("DELETE FROM bets")
-    cursor.execute("DELETE FROM markets")
-    cursor.execute("DELETE FROM users")
-    # Reset autoincrement counters
-    cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('bets','markets','users')")
+    if guild_id:
+        cursor.execute("DELETE FROM bets WHERE guild_id = ?", (guild_id,))
+        cursor.execute("DELETE FROM markets WHERE guild_id = ?", (guild_id,))
+        cursor.execute("DELETE FROM users WHERE guild_id = ?", (guild_id,))
+        print(f"✅ Soft reset complete for guild {guild_id} — guild rows deleted, schema kept.")
+    else:
+        cursor.execute("DELETE FROM bets")
+        cursor.execute("DELETE FROM markets")
+        cursor.execute("DELETE FROM users")
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('bets','markets','users')")
+        print("✅ Soft reset complete — all rows deleted, schema kept.")
 
     conn.commit()
     conn.close()
-    print("✅ Soft reset complete — all rows deleted, schema kept.")
 
 
 def hard_reset():
@@ -46,6 +51,11 @@ def hard_reset():
 
 
 if __name__ == "__main__":
+    guild_arg = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--guild="):
+            guild_arg = arg.split("=", 1)[1]
+
     if "--hard" in sys.argv:
         confirm = input(f"⚠️  This will DELETE {config.DATABASE_PATH} entirely. Type 'yes' to confirm: ")
         if confirm.strip().lower() == "yes":
@@ -53,8 +63,9 @@ if __name__ == "__main__":
         else:
             print("Aborted.")
     else:
-        confirm = input("⚠️  This will wipe ALL users, markets, and bets. Type 'yes' to confirm: ")
+        scope = f" for guild {guild_arg}" if guild_arg else ""
+        confirm = input(f"⚠️  This will wipe ALL users, markets, and bets{scope}. Type 'yes' to confirm: ")
         if confirm.strip().lower() == "yes":
-            soft_reset()
+            soft_reset(guild_arg)
         else:
             print("Aborted.")

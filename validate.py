@@ -127,7 +127,7 @@ def check_database():
         print_status("Database initializes successfully", True)
 
         # Try to create a test user
-        test_user = db.get_or_create_user("test_user_123")
+        test_user = db.get_or_create_user("test_user_123", "test_guild_123")
         if test_user:
             print("  → Database operations working")
 

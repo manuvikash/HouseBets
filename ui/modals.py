@@ -47,6 +47,7 @@ class CreateMarketModal(discord.ui.Modal):
     async def callback(self, interaction: discord.Interaction):
         """Handle modal submission."""
         await interaction.response.defer(ephemeral=True)
+        self.interaction = interaction
 
         try:
             # Target user is always provided by the slash command option or context menu
